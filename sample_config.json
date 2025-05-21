@@ -1,0 +1,16 @@
+{
+    "tasks": [
+        {
+            "path": "/home/jay/SourceCode/ImageRenamer/sample_images",
+            "name": "John Doe",
+            "birth": "01-15-2020",
+            "recursive": false
+        },
+        {
+            "path": "/home/jay/SourceCode/ImageRenamer/family_photos",
+            "name": "Jane Smith",
+            "birth": "06-30-2018",
+            "recursive": true
+        }
+    ]
+}

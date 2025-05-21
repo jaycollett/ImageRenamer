@@ -27,9 +27,24 @@ Dependencies:
 Usage:
     python rename_by_age.py <path> "<Name>" <MM-DD-YYYY> [--recursive] [--dry-run]
     python rename_by_age.py <path> --undo [--force]
+    python rename_by_age.py --config <config.json> [--dry-run]
+
+Config JSON format:
+    {
+        "tasks": [
+            {
+                "path": "/path/to/images",
+                "name": "Person Name",
+                "birth": "MM-DD-YYYY",
+                "recursive": true|false
+            },
+            ...
+        ]
+    }
 """
 import argparse
 import sys
+import json
 from pathlib import Path
 from datetime import datetime, date
 from PIL import Image
@@ -133,39 +148,22 @@ def undo_renames(log_file: Path, force: bool):
     except Exception as e:
         print(f"Failed to remove log: {e}", file=sys.stderr)
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Rename images by age/date or undo using log with safeguards."
-    )
-    parser.add_argument("path", type=Path, help="Image file or directory")
-    parser.add_argument("name", nargs='?', help="Person's name for renaming")
-    parser.add_argument("birth", nargs='?', help="Birth date MM-DD-YYYY for renaming")
-    parser.add_argument("--undo", action='store_true', help="Reverse renames using log file")
-    parser.add_argument("--recursive", action='store_true', help="Process directories recursively")
-    parser.add_argument("--dry-run", action='store_true', help="Show changes without applying them")
-    parser.add_argument("--force", action='store_true', help="Skip confirmations on undo")
-    args = parser.parse_args()
-
-    root = args.path if args.path.is_dir() else args.path.parent
+def process_task(path, name, birth, recursive=False, dry_run=False):
+    """Process a single renaming task with the given parameters."""
+    root = path if path.is_dir() else path.parent
     log_file = root / "rename_log.csv"
-
-    if args.undo:
-        undo_renames(log_file, args.force)
-        return
-
-    if not (args.name and args.birth):
-        parser.error("Provide name and birth date or use --undo")
-
+    
     try:
-        birth = datetime.strptime(args.birth, "%m-%d-%Y").date()
+        birth_date = datetime.strptime(birth, "%m-%d-%Y").date()
     except ValueError:
-        parser.error("Birth date must be in MM-DD-YYYY format")
-
-    images = gather_images(args.path, args.recursive)
+        print(f"Error: Birth date '{birth}' must be in MM-DD-YYYY format")
+        return False
+    
+    images = gather_images(path, recursive)
     if not images:
-        print(f"No images found at {args.path}")
-        return
-
+        print(f"No images found at {path}")
+        return False
+    
     # Read already-renamed files from log
     already_renamed = set()
     if log_file.exists():
@@ -176,17 +174,17 @@ def main():
                 if len(parts) == 3:
                     _, old, _ = parts
                     already_renamed.add(old)
-
-    if not log_file.exists() and not args.dry_run:
+    
+    if not log_file.exists() and not dry_run:
         log_file.write_text("timestamp,old_filename,new_filename\n")
-
+    
     # Group images by date to reset counter per date
     from collections import defaultdict
     groups = defaultdict(list)
     for img in images:
         dt = get_exif_date(img) or datetime.fromtimestamp(img.stat().st_mtime).date()
         groups[dt].append(img)
-
+    
     for dt in sorted(groups):
         counter = 1
         for img in sorted(groups[dt]):
@@ -194,12 +192,12 @@ def main():
             if old_name in already_renamed:
                 print(f"[SKIP] Already renamed: {old_name}")
                 continue
-            age = calculate_age_full(birth, dt)
+            age = calculate_age_full(birth_date, dt)
             date_str = dt.strftime('%Y%m%d')
             padded = f"{counter:03d}"
             # New naming: name first, then date, age, and ID
             new_name = (
-                f"{args.name.replace(' ','_')}_"
+                f"{name.replace(' ','_')}_"
                 f"{date_str}_"
                 f"{age}_"
                 f"{padded}"
@@ -212,14 +210,14 @@ def main():
                 temp += 1
                 padded = f"{temp:03d}"
                 new_name = (
-                    f"{args.name.replace(' ','_')}_"
+                    f"{name.replace(' ','_')}_"
                     f"{date_str}_"
                     f"{age}_"
                     f"{padded}"
                     f"{img.suffix.lower()}"
                 )
                 new_p = img.with_name(new_name)
-            if args.dry_run:
+            if dry_run:
                 print(f"[DRY-RUN] {old_name} → {new_name}")
             else:
                 try:
@@ -230,6 +228,85 @@ def main():
                 except Exception as e:
                     print(f"Failed to rename {old_name}: {e}", file=sys.stderr)
             counter += 1
+    
+    return True
+
+def read_config_file(config_path):
+    """Read and parse the JSON configuration file."""
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        
+        if 'tasks' not in config or not isinstance(config['tasks'], list):
+            print("Error: Config file must contain a 'tasks' array")
+            return None
+        
+        return config
+    except json.JSONDecodeError as e:
+        print(f"Error parsing JSON config file: {e}")
+        return None
+    except Exception as e:
+        print(f"Error reading config file: {e}")
+        return None
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Rename images by age/date or undo using log with safeguards."
+    )
+    # Create mutually exclusive group for path or config
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--config", type=Path, help="Path to JSON configuration file")
+    group.add_argument("path", nargs='?', type=Path, help="Image file or directory")
+    
+    parser.add_argument("name", nargs='?', help="Person's name for renaming")
+    parser.add_argument("birth", nargs='?', help="Birth date MM-DD-YYYY for renaming")
+    parser.add_argument("--undo", action='store_true', help="Reverse renames using log file")
+    parser.add_argument("--recursive", action='store_true', help="Process directories recursively")
+    parser.add_argument("--dry-run", action='store_true', help="Show changes without applying them")
+    parser.add_argument("--force", action='store_true', help="Skip confirmations on undo")
+    args = parser.parse_args()
+
+    # Handle config file mode
+    if args.config:
+        if args.undo:
+            parser.error("--undo cannot be used with --config")
+        
+        config = read_config_file(args.config)
+        if not config:
+            return
+        
+        print(f"Processing {len(config['tasks'])} tasks from config file...")
+        
+        for i, task in enumerate(config['tasks']):
+            print(f"\nTask {i+1}/{len(config['tasks'])}:")
+            
+            # Validate required fields
+            if not all(k in task for k in ['path', 'name', 'birth']):
+                print("Error: Each task must include 'path', 'name', and 'birth'")
+                continue
+            
+            # Process the task
+            path = Path(task['path'])
+            name = task['name']
+            birth = task['birth']
+            recursive = task.get('recursive', False)
+            
+            print(f"Processing: {path} for {name} (born {birth})")
+            process_task(path, name, birth, recursive, args.dry_run)
+        
+        return
+    
+    # Handle command-line mode
+    if args.undo:
+        root = args.path if args.path.is_dir() else args.path.parent
+        log_file = root / "rename_log.csv"
+        undo_renames(log_file, args.force)
+        return
+    
+    if not (args.name and args.birth):
+        parser.error("Provide name and birth date or use --undo or --config")
+    
+    process_task(args.path, args.name, args.birth, args.recursive, args.dry_run)
 
 if __name__ == "__main__":
     main()
