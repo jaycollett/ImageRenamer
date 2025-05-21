@@ -39,12 +39,12 @@ import exifread
 # Threshold for day vs month switch
 DAY_MONTH_THRESHOLD = 28
 # Allowed image extensions (lowercase)
-ALLOWED_EXTS = {'.jpg', '.jpeg', '.png', '.tiff', '.heic', '.bmp', '.nef'}
+ALLOWED_EXTS = {'.jpg', '.jpeg', '.png', '.tiff', '.heic', '.bmp', '.nef', '.dng'}
 
 def get_exif_date(img_path: Path) -> date | None:
     """Extract photo date from EXIF or fallback to filesystem timestamp."""
     suffix = img_path.suffix.lower()
-    if suffix == '.nef':
+    if suffix in ('.nef', '.dng'):
         try:
             with open(img_path, 'rb') as f:
                 tags = exifread.process_file(f)
