@@ -166,6 +166,17 @@ def main():
         print(f"No images found at {args.path}")
         return
 
+    # Read already-renamed files from log
+    already_renamed = set()
+    if log_file.exists():
+        with open(log_file, 'r') as f:
+            lines = f.readlines()[1:]  # skip header
+            for line in lines:
+                parts = line.strip().split(',')
+                if len(parts) == 3:
+                    _, old, _ = parts
+                    already_renamed.add(old)
+
     if not log_file.exists() and not args.dry_run:
         log_file.write_text("timestamp,old_filename,new_filename\n")
 
@@ -180,6 +191,9 @@ def main():
         counter = 1
         for img in sorted(groups[dt]):
             old_name = img.name
+            if old_name in already_renamed:
+                print(f"[SKIP] Already renamed: {old_name}")
+                continue
             age = calculate_age_full(birth, dt)
             date_str = dt.strftime('%Y%m%d')
             padded = f"{counter:03d}"
